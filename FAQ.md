@@ -7,7 +7,7 @@
 2. What are the system requirements for each server role in the Windows Server 2016 SDN Stack?
   - *Refer to TechNet for the [role requirements](https://technet.microsoft.com/en-US/library/mt605207.aspx) 
 3. Can I try out SDN on a single host? I would like to build a cloud with 10 VMs and 10 tenants.
-  - *Yes, a single-node POC setup is available to try for SDN and Microsoft Azure Stack (MAS) components. Link is coming soon...*
+  - *Yes, [a single-node POC setup will be available to try for SDN and Microsoft Azure Stack (MAS) components.](http://blogs.technet.com/b/server-cloud/archive/2015/12/21/microsoft-azure-stack-hardware-requirements.aspx) *
 
 ### Scenarios ###
 1. What scenarios can I try with the new SDN Stack?
