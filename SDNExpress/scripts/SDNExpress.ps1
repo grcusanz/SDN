@@ -1,4 +1,4 @@
-﻿# --------------------------------------------------------------
+# --------------------------------------------------------------
 #  Copyright © Microsoft Corporation.  All Rights Reserved.
 #  Microsoft Corporation (or based on where you live, one of its affiliates) licenses this sample code for your internal testing purposes only.
 #  Microsoft provides the following sample code AS IS without warranty of any kind. The sample code arenot supported under any Microsoft standard support program or services.
@@ -158,7 +158,7 @@ try {
     if ($ConfigData.VMProcessorCount -eq $null) {$ConfigData.VMProcessorCount = 8}
     if ($ConfigData.VMMemory -eq $null) {$ConfigData.VMMemory = 8GB}
 
-    write-SDNExpressLog "STAGE 1: Create VMs"
+    write-SDNExpressLog "STAGE 1: Prepare Deployment"
 
     $params = @{
         'ComputerName'='';
@@ -189,7 +189,29 @@ try {
         $params.TimeZone = $ConfigData.TimeZone
     }
 
-    write-SDNExpressLog "STAGE 1.1: Create NC VMs"
+    write-SDNExpressLog "STAGE 2: Enable VFP"
+    foreach ($h in $ConfigData.hypervhosts) {
+
+        write-SDNExpressLog "Adding net virt feature to $($h)"
+        invoke-command -ComputerName $h -credential $credential {
+            add-windowsfeature NetworkVirtualization -IncludeAllSubFeature -IncludeManagementTools
+        }
+     
+        write-SDNExpressLog "Enabling VFP on $($h) $($ConfigData.SwitchName)"
+        invoke-command -ComputerName $h -credential $credential {
+            param(
+                [String] $VirtualSwitchName
+                )
+            Enable-VmSwitchExtension -VMSwitchName $VirtualSwitchName -Name "Microsoft Azure VFP Switch Extension"
+        } -ArgumentList $ConfigData.SwitchName
+
+        invoke-command -ComputerName $h -credential $credential {
+          Set-Service -Name NCHostAgent  -StartupType Automatic; Start-Service -Name NCHostAgent 
+        }
+    }
+
+    write-SDNExpressLog "STAGE 3: Prepare VMs"
+    write-SDNExpressLog "STAGE 3.1: Create NC VMs"
     foreach ($NC in $ConfigData.NCs) {
         $params.ComputerName=$NC.HostName;
         $params.VMName=$NC.ComputerName;
@@ -200,7 +222,7 @@ try {
         New-SDNExpressVM @params
     }
 
-    write-SDNExpressLog "STAGE 1.2: Create Mux VMs"
+    write-SDNExpressLog "STAGE 3.2: Create Mux VMs"
 
     foreach ($Mux in $ConfigData.Muxes) {
         $params.ComputerName=$mux.HostName;
@@ -214,7 +236,7 @@ try {
         New-SDNExpressVM @params
     }
 
-    write-SDNExpressLog "STAGE 1.3: Create Gateway VMs"
+    write-SDNExpressLog "STAGE 3.3: Create Gateway VMs"
 
     foreach ($Gateway in $ConfigData.Gateways) {
         $params.ComputerName=$Gateway.HostName;
@@ -231,7 +253,7 @@ try {
 
 
     if ($ConfigData.NCs.count -gt 0) {
-        write-SDNExpressLog "STAGE 2: Network Controller Configuration"
+        write-SDNExpressLog "STAGE 4: Network Controller Configuration"
         $NCNodes = @()
         foreach ($NC in $ConfigData.NCs) {
             $NCNodes += $NC.ComputerName
@@ -251,7 +273,7 @@ try {
         }
         New-SDNExpressNetworkController @params
 
-        write-SDNExpressLog "STAGE 2.1: Getting REST cert thumbprint in order to find it in local root store."
+        write-SDNExpressLog "STAGE 4.1: Getting REST cert thumbprint in order to find it in local root store."
         $NCHostCertThumb = invoke-command -ComputerName $NCNodes[0] -Credential $credential { 
             param(
                 $RESTName
@@ -305,14 +327,14 @@ try {
         }
     }
 
-    write-SDNExpressLog "STAGE 3: Host Configuration"
+    write-SDNExpressLog "STAGE 4.2: Host Configuration"
 
     foreach ($h in $ConfigData.hypervhosts) {
         Add-SDNExpressHost -ComputerName $h -RestName $ConfigData.RestName -HostPASubnetPrefix $ConfigData.PASubnet -NCHostCert $NCHostCert -Credential $Credential -VirtualSwitchName $ConfigData.SwitchName
     }
 
     if ($ConfigData.Muxes.Count -gt 0) {
-        write-SDNExpressLog "STAGE 4: Mux Configuration"
+        write-SDNExpressLog "STAGE 5: MUX Configuration"
 
         WaitforComputerToBeReady -ComputerName $ConfigData.Muxes.ComputerName -Credential $Credential
 
@@ -323,7 +345,7 @@ try {
 
 
     if ($ConfigData.Gateways.Count -gt 0) {
-        write-SDNExpressLog "STAGE 5: Gateway Configuration"
+        write-SDNExpressLog "STAGE 6: Gateway Configuration"
 
         if ([String]::IsNullOrEmpty($ConfigData.RedundantCount)) {
             $ConfigData.RedundantCount = 1
@@ -344,8 +366,10 @@ try {
                 'FrontEndAddressPrefix'=$ConfigData.PASubnet
                 'FrontEndMac'=$G.FrontEndMac
                 'BackEndMac'=$G.BackEndMac
-                'Routers'=$ConfigData.Routers 
+                'Routers'=$ConfigData.Routers
+                'PAGateway'=$ConfigData.PAGateway
                 'LocalASN'=$ConfigData.SDNASN
+                'ManagementRoutes'=$ConfigData.ManagementRoutes
             }
             New-SDNExpressGateway @params  -Credential $Credential
         }
