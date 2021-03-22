@@ -1,4 +1,4 @@
-﻿# --------------------------------------------------------------
+# --------------------------------------------------------------
 #  Copyright © Microsoft Corporation.  All Rights Reserved.
 #  Microsoft Corporation (or based on where you live, one of its affiliates) licenses this sample code for your internal testing purposes only.
 #  Microsoft provides the following sample code AS IS without warranty of any kind. The sample code arenot supported under any Microsoft standard support program or services.
@@ -2030,11 +2030,12 @@ Function New-SDNExpressGateway {
         [String] $LocalASN = $null,
         [Parameter(Mandatory=$true,ParameterSetName="MultiPeer")]        
         [Object] $Routers,
+        [String] $PAGateway = "",
+        [String[]] $ManagementRoutes,
         [PSCredential] $Credential = $null
     )
 
     Write-SDNExpressLogFunction -FunctionName $MyInvocation.MyCommand.Name -boundparameters $psboundparameters -UnboundArguments $MyINvocation.UnboundArguments -ParamSet $psCmdlet
-
 
     if ($null -eq $Credential) {
         $CredentialParam = @{ }
@@ -2042,7 +2043,7 @@ Function New-SDNExpressGateway {
         $CredentialParam = @{ Credential = $credential}
     }
 
-    $uri = "https://$RestName"    
+    $uri = "https://$RestName"
 
     $RebootRequired = invoke-command -computername $ComputerName @CredentialParam {
         param(
@@ -2070,10 +2071,22 @@ Function New-SDNExpressGateway {
         write-sdnexpresslog "Restart complete, installing RemoteAccess multitenancy and GatewayService."
     }
 
+    $PASubnets = @()
+    $LogicalNetworkObject = get-NetworkControllerLogicalNetwork -ConnectionURI $uri -ResourceID "HNVPA" -Credential $Credential
+
+    $PASubnets += $LogicalNetworkObject.properties.subnets.properties.AddressPrefix
+    foreach ($Router in $Routers) {
+        $PASubnets += "$($Router.RouterIPAddress)/32"
+    }
+
+
     invoke-command -computername $ComputerName @CredentialParam {
         param(
             [String] $FrontEndMac,
-            [String] $BackEndMac            
+            [String] $BackEndMac,
+            [String[]] $ManagementRoutes,
+            [String] $PAGateway,
+            [String[]] $PASubnets
         )
         function private:write-verbose { param([String] $Message) write-output "[V]"; write-output $Message}
         function private:write-output { param([PSObject[]] $InputObject) write-output "$($InputObject.count)"; write-output $InputObject}
@@ -2093,6 +2106,31 @@ Function New-SDNExpressGateway {
 
         $adapter = $adapters | where-object {$_.MacAddress -eq $FrontEndMac}
         $adapter | Rename-NetAdapter -NewName "External" -Confirm:$false -ErrorAction Ignore | out-null
+        Start-Sleep 10
+
+        write-verbose "Configure Managment Routes"
+        if($ManagementRoutes -ne $null) {
+            $mgmtNicIndex = (Get-NetAdapter | WHERE { $_.Name -ne "Internal" -AND $_.Name -ne "External"} ).ifIndex
+            [string] $mgmtNextHop = (Get-NetRoute -InterfaceIndex $mgmtNicIndex | where {$_.DestinationPrefix -eq '0.0.0.0/0'} | select NextHop).NextHop
+            foreach($route in $ManagementRoutes) {
+                write-verbose "new-netroute -DestinationPrefix $($route) -InterfaceIndex $($mgmtNicIndex) -NextHop $($mgmtNextHop) -erroraction ignore"
+                new-netroute -DestinationPrefix $route -InterfaceIndex $mgmtNicIndex -NextHop $mgmtNextHop -erroraction ignore | out-null
+            }
+            write-verbose "remove-netroute -DestinationPrefix 0.0.0.0/0 -InterfaceIndex $($mgmtNicIndex) -Confirm:$false -erroraction ignore"
+            remove-netroute -DestinationPrefix 0.0.0.0/0 -InterfaceIndex $mgmtNicIndex -Confirm:$false -erroraction ignore
+            Start-Sleep 10
+
+            $externalNicIndex = (Get-NetAdapter | where { $_.MacAddress -eq $FrontEndMac } ).ifIndex
+            if (![String]::IsNullOrEmpty($PAGateway)) {
+                foreach ($PASubnet in $PASubnets) {
+                   write-verbose "new-netroute -DestinationPrefix $($PASubnet ) -InterfaceIndex $($externalNicIndex) -NextHop $($PAGateway) -erroraction ignore"
+                   remove-netroute -DestinationPrefix $PASubnet -InterfaceIndex $externalNicIndex -Confirm:$false -erroraction ignore | out-null
+                   new-netroute -DestinationPrefix $PASubnet -InterfaceIndex $externalNicIndex -NextHop $PAGateway  -erroraction ignore | out-null
+                }
+                Start-Sleep 10
+            }
+        }
+
 
         $RemoteAccess = get-RemoteAccess
         if ($RemoteAccess -eq $null -or $RemoteAccess.VpnMultiTenancyStatus -ne "Installed")
