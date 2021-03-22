@@ -2149,7 +2149,7 @@ Function New-SDNExpressGateway {
             Set-Service -Name GatewayService -StartupType Automatic | out-null
             Start-Service -Name GatewayService  | out-null
         }
-    } -ArgumentList $FrontEndMac, $BackEndMac | Parse-RemoteOutput
+    } -ArgumentList $VMName, $LocalVMPath, $VMMemory, $VMProcessorCount, $LocalVHDPath, $SwitchName, $Nics | Parse-RemoteOutput
 
     write-sdnexpresslog "Configuring certificates."
 
